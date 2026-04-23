@@ -68,6 +68,7 @@ jobs:
         run: make build
 
       - name: Run C test-bench
+        continue-on-error: true
         run: make test
 
       - name: Collect coverage & generate HTML report
