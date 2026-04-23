@@ -1,3 +1,6 @@
 /build/*
 /images/*
 .vscode
+
+# MacOS
+.DS_Store
