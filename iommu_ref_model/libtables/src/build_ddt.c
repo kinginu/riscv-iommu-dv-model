@@ -30,8 +30,9 @@ add_dev_context(
     }
     a = iommu->reg_file.ddtp.ppn * PAGESIZE;
     if ( iommu->reg_file.ddtp.iommu_mode == DDT_3LVL ) LEVELS = 3;
-    if ( iommu->reg_file.ddtp.iommu_mode == DDT_2LVL ) LEVELS = 2;
-    if ( iommu->reg_file.ddtp.iommu_mode == DDT_1LVL ) LEVELS = 1;
+    else if ( iommu->reg_file.ddtp.iommu_mode == DDT_2LVL ) LEVELS = 2;
+    else if ( iommu->reg_file.ddtp.iommu_mode == DDT_1LVL ) LEVELS = 1;
+    else LEVELS = 0;
     i = LEVELS - 1;
     while ( i > 0 ) {
         ddte.raw = 0;

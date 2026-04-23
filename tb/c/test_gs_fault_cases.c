@@ -84,7 +84,8 @@ static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
         MSIPTP_Off, 0,
         0, 0);
 
-    iohgatp_t iohgatp = {0};
+    static iohgatp_t iohgatp;
+    memset(&iohgatp, 0, sizeof(iohgatp));
     iohgatp.MODE  = iohgatp_mode;
     iohgatp.PPN   = gppn;
     iohgatp.GSCID = MY_GSCID;

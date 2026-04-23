@@ -12,6 +12,9 @@ int8_t
 reset_system(
     uint8_t mem_gb, uint16_t num_vms) {
     uint32_t gscid;
+    // Free previous memory if it exists
+    if (memory != NULL)
+        free(memory);
     // Create memory
     if ( (memory = malloc((mem_gb * 1024UL * 1024UL * 1024UL))) == NULL )
         return -1;
@@ -306,9 +309,8 @@ add_device(iommu_t *iommu, uint32_t device_id, uint32_t gscid, uint8_t en_ats, u
            uint8_t iohgatp_mode, uint8_t iosatp_mode, uint8_t pdt_mode,
            uint8_t msiptp_mode, uint8_t msiptp_pages, uint64_t msi_addr_mask,
            uint64_t msi_addr_pattern) {
-    device_context_t DC;
-    char zero[16384];
-    memset(zero, 0, 16384);
+    static device_context_t DC;
+    static char zero[16384] = {0};
     memset(&DC, 0, sizeof(DC));
 
     DC.tc.V      = 1;
