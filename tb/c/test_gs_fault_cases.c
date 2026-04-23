@@ -77,7 +77,8 @@ static int test_num = 0;
 // -------------------------------------------------------------------------- //
 static iommu_t g_iommu;
 
-static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
+static iohgatp_t setup_ex(uint8_t iohgatp_mode, uint8_t iosatp_mode,
+                          uint8_t gade, uint8_t sade, uint8_t dtf)
 {
     reset_system(1 /*mem_gb*/, 65535 /*num_vms*/);
     memset(&g_iommu, 0, sizeof(g_iommu));
@@ -112,10 +113,10 @@ static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
         &g_iommu,
         MY_DID, MY_GSCID,
         0, 0, 0,
-        0, 0,
-        gade, 0,
+        dtf, 0,
+        gade, sade,
         0, 0, 0,
-        iohgatp_mode, IOSATP_Bare, PDTP_Bare,
+        iohgatp_mode, iosatp_mode, PDTP_Bare,
         MSIPTP_Off, 0,
         0, 0);
 
@@ -125,6 +126,11 @@ static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
     iohgatp.PPN   = gppn;
     iohgatp.GSCID = MY_GSCID;
     return iohgatp;
+}
+
+static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
+{
+    return setup_ex(iohgatp_mode, IOSATP_Bare, gade, 0, 0);
 }
 
 static void make_leaf(iohgatp_t iohgatp, uint64_t gpa, uint64_t ppn,
@@ -280,6 +286,221 @@ static int8_t test_GS026(void)
         (status_t)STATUS_SUCCESS, 0, 0);
 }
 
+// GS-002 Sv39x4 root 16KiB alignment: iohgatp.PPN[1:0] != 0
+// Ref model auto-allocates a 4-page-aligned root via add_device, so we
+// cannot easily provoke this via the normal path. Skip unless a manual
+// DC rewrite path is added.
+static int8_t test_GS002(void)
+{
+    (void)setup(IOHGATP_Sv39x4, 0);
+    return -1;  // known-unsupported via current harness
+}
+
+// GS-005 G.L2 root V=0 on instruction fetch -> cause 20
+static int8_t test_GS005(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    uint64_t gpa = 0x0000001000000000ULL;
+    gpte_t pte = {0};  // V=0
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 2);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,
+        1 /*exec_req*/, 0, 0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 20, 0);
+}
+
+// GS-007 G.L1 R=1 superpage (2MiB) on read -> cause 21 (ref impl rejects)
+static int8_t test_GS007(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    uint64_t gpa = 0x0000000000420000ULL;
+    gpte_t pte = {0};
+    pte.V = 1; pte.R = 1; pte.U = 1; pte.A = 1; pte.D = 1;
+    pte.PPN = 0x11111;
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 1);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 21, 0);
+}
+
+// GS-008 G.L2 R=1 superpage (1GiB) on read -> cause 21
+static int8_t test_GS008(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    uint64_t gpa = 0x0000000140000000ULL;
+    gpte_t pte = {0};
+    pte.V = 1; pte.R = 1; pte.U = 1; pte.A = 1; pte.D = 1;
+    pte.PPN = 0x22222;
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 2);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 21, 0);
+}
+
+// GS-009 G.L1 W=1 superpage on store -> cause 23
+static int8_t test_GS009(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    uint64_t gpa = 0x0000000000421000ULL;
+    gpte_t pte = {0};
+    pte.V = 1; pte.R = 1; pte.W = 1; pte.U = 1; pte.A = 1; pte.D = 1;
+    pte.PPN = 0x33333;
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 1);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 23, 0);
+}
+
+// GS-010 G.L2 W=1 superpage on store -> cause 23
+static int8_t test_GS010(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    uint64_t gpa = 0x0000000180000000ULL;
+    gpte_t pte = {0};
+    pte.V = 1; pte.R = 1; pte.W = 1; pte.U = 1; pte.A = 1; pte.D = 1;
+    pte.PPN = 0x44444;
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 2);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 23, 0);
+}
+
+// GS-017..020: IOBridge PMP/PMA/decode faults originate *outside* the
+// IOMMU model (OUT label in the matrix). The reference model does not
+// synthesize them, so these are placeholders exercising the normal
+// translate path; the harness will mark them FAIL on cause mismatch.
+static int8_t test_GS017(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    (void)iohgatp;
+    uint64_t gpa = 0x0000000000460000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 5, 0);
+}
+static int8_t test_GS018(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    (void)iohgatp;
+    uint64_t gpa = 0x0000000000461000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 5, 0);
+}
+static int8_t test_GS019(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    (void)iohgatp;
+    uint64_t gpa = 0x0000000000462000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 7, 0);
+}
+static int8_t test_GS020(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    (void)iohgatp;
+    uint64_t iova = 0x0000000000463000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 5, 0);
+}
+
+// GS-021..025: 2-stage tests need VS-stage PTEs with access to the
+// device context's iosatp. The add_device path allocates this
+// internally and does not expose it, so full setup is deferred.
+// We issue the translation with 2-stage enabled; cause-code match
+// depends on ref model behaviour with no VS PTEs populated.
+static int8_t test_GS021(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    (void)iohgatp;
+    uint64_t iova = 0x0000000001001000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 13, 0);
+}
+static int8_t test_GS022(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    (void)iohgatp;
+    uint64_t iova = 0x0000000001002000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 21, 0);
+}
+static int8_t test_GS023(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    (void)iohgatp;
+    uint64_t iova = 0x0000000001003000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, iova, 1, WRITE, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 21, 0);
+}
+static int8_t test_GS024(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    (void)iohgatp;
+    uint64_t iova = 0x0000000001004000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, iova, 1, WRITE, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 23, 0);
+}
+static int8_t test_GS025(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    (void)iohgatp;
+    uint64_t iova = 0x0000000001005000ULL;
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 13, 0);
+}
+
+// GS-027 DTF=1 suppresses FQ record on GS fault (explicit GS)
+static int8_t test_GS027(void)
+{
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Bare, 0, 0, 1 /*dtf*/);
+    uint64_t gpa = 0x0000000002000000ULL;
+    gpte_t pte = {0};  // V=0 -> explicit GPF
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 0);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    // DTF=1: fault reported to device but no FQ record. We still expect
+    // UNSUPPORTED_REQUEST status and cause=21 in the response.
+    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 21, 0);
+}
+
 // -------------------------------------------------------------------------- //
 // main
 // -------------------------------------------------------------------------- //
@@ -292,16 +513,32 @@ int main(void)
     printf("=== G-stage fault case tests ===\n\n");
 
     RUN_TEST("GS-001 GPA[63:41]!=0",         test_GS001());
+    RUN_TEST("GS-002 root misaligned (skip)", test_GS002());
     RUN_TEST("GS-003 leaf V=0",              test_GS003());
     RUN_TEST("GS-004 L1 V=0 on store",       test_GS004());
+    RUN_TEST("GS-005 L2 root V=0 on instr",  test_GS005());
     RUN_TEST("GS-006 R=0,W=1 reserved",      test_GS006());
+    RUN_TEST("GS-007 L1 R=1 superpage rd",   test_GS007());
+    RUN_TEST("GS-008 L2 R=1 superpage rd",   test_GS008());
+    RUN_TEST("GS-009 L1 W=1 superpage wr",   test_GS009());
+    RUN_TEST("GS-010 L2 W=1 superpage wr",   test_GS010());
     RUN_TEST("GS-011 leaf U=0",              test_GS011());
     RUN_TEST("GS-012 read, PTE.R=0",         test_GS012());
     RUN_TEST("GS-013 write, PTE.W=0",        test_GS013());
     RUN_TEST("GS-014 exec, PTE.X=0",         test_GS014());
     RUN_TEST("GS-015 A=0, GADE=0",           test_GS015());
     RUN_TEST("GS-016 D=0, store, GADE=0",    test_GS016());
+    RUN_TEST("GS-017 OUT PMP root",          test_GS017());
+    RUN_TEST("GS-018 OUT PMA L1",            test_GS018());
+    RUN_TEST("GS-019 OUT decode L0",         test_GS019());
+    RUN_TEST("GS-020 OUT PMP implicit",      test_GS020());
+    RUN_TEST("GS-021 2-stage VS V=0",        test_GS021());
+    RUN_TEST("GS-022 2-stage implicit GPF",  test_GS022());
+    RUN_TEST("GS-023 2-stage implicit store",test_GS023());
+    RUN_TEST("GS-024 2-stage explicit final",test_GS024());
+    RUN_TEST("GS-025 2-stage FS U=0 wins",   test_GS025());
     RUN_TEST("GS-026 iohgatp=Bare success",  test_GS026());
+    RUN_TEST("GS-027 DTF suppress GS",       test_GS027());
 
     printf("\n=== Summary: %d passed, %d failed ===\n", g_pass, g_fail);
     return (g_fail > 0) ? 1 : 0;
