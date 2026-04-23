@@ -1,95 +1,109 @@
-# Makefile for RISC-V Doc Template
+# =============================================================================
+# riscv-iommu-ref-cov  —  Makefile
 #
-# This work is licensed under the Creative Commons Attribution-ShareAlike 4.0
-# International License. To view a copy of this license, visit
-# http://creativecommons.org/licenses/by-sa/4.0/ or send a letter to
-# Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+# Builds the upstream libiommu reference model with gcov coverage
+# instrumentation, then runs all registered test cases and generates
+# an lcov HTML report.
 #
-# SPDX-License-Identifier: CC-BY-SA-4.0
-#
-# Description:
-#
-# This Makefile is designed to automate the process of building and packaging
-# the Doc Template for RISC-V Extensions.
+# Usage:
+#   make              — build + run tests + generate HTML report
+#   make build        — compile with coverage flags only
+#   make test         — run all test binaries
+#   make coverage     — collect gcov data & generate HTML report
+#   make clean        — remove build artefacts and coverage data
+# =============================================================================
 
-DOCS := \
-	riscv-iommu.adoc
+# --------------------------------------------------------------------------- #
+# Paths (adjust REF_MODEL_DIR if the submodule lives elsewhere)
+# --------------------------------------------------------------------------- #
+REF_MODEL_DIR   := upstream/iommu_ref_model
+LIBIOMMU_SRC    := $(REF_MODEL_DIR)/libiommu/src
+LIBIOMMU_INC    := $(REF_MODEL_DIR)/libiommu/include
+TB_DIR          := tb/c
+BUILD_DIR       := build
+COV_DIR         := coverage/html
+LCOV_INFO       := coverage/lcov.info
+LCOV_INFO_FILT  := coverage/lcov_filtered.info
 
-DATE ?= $(shell date +%Y-%m-%d)
-VERSION ?= v1.0
-REVMARK ?= 'This document is Ratified. See http://riscv.org/spec-state for details.'
-DOCKER_IMG := ghcr.io/riscv/riscv-docs-base-container-image:latest
-ifneq ($(SKIP_DOCKER),true)
-	DOCKER_CMD := docker run --rm -v ${PWD}:/build -w /build \
-	${DOCKER_IMG} \
-	/bin/sh -c
-	DOCKER_QUOTE := "
-endif
+# --------------------------------------------------------------------------- #
+# Toolchain
+# --------------------------------------------------------------------------- #
+CC      := gcc
+CFLAGS  := -O0 -g \
+            -I$(LIBIOMMU_INC) \
+            --coverage \
+            -fprofile-arcs \
+            -ftest-coverage \
+            -Wall -Wextra -Wno-unused-parameter
+LDFLAGS := --coverage
 
-SRC_DIR := src
-BUILD_DIR := build
+# --------------------------------------------------------------------------- #
+# Sources
+# --------------------------------------------------------------------------- #
+LIBIOMMU_SRCS := $(wildcard $(LIBIOMMU_SRC)/*.c)
+TB_SRCS       := $(wildcard $(TB_DIR)/*.c)
 
-DOCS_PDF := $(DOCS:%.adoc=%.pdf)
-DOCS_HTML := $(DOCS:%.adoc=%.html)
+# One test binary per file in tb/c/
+TEST_BINS := $(patsubst $(TB_DIR)/%.c, $(BUILD_DIR)/%, $(TB_SRCS))
 
-XTRA_ADOC_OPTS :=
-ASCIIDOCTOR_PDF := asciidoctor-pdf
-ASCIIDOCTOR_HTML := asciidoctor
-OPTIONS := --trace \
-           -a compress \
-           -a mathematical-format=svg \
-           -a revnumber=${VERSION} \
-           -a revremark=${REVMARK} \
-           -a revdate=${DATE} \
-           -a pdf-fontsdir=docs-resources/fonts \
-           -a pdf-theme=docs-resources/themes/riscv-pdf.yml \
-           $(XTRA_ADOC_OPTS) \
-		   -D build \
-           --failure-level=ERROR
-REQUIRES := --require=asciidoctor-bibtex \
-            --require=asciidoctor-diagram \
-			--require=asciidoctor-lists \
-            --require=asciidoctor-mathematical
+# --------------------------------------------------------------------------- #
+# Targets
+# --------------------------------------------------------------------------- #
+.PHONY: all build test coverage clean report
 
-.PHONY: all build clean build-container build-no-container build-docs
+all: build test coverage
 
-all: build
+build: $(TEST_BINS)
 
-build-docs: $(DOCS_PDF) $(DOCS_HTML)
+# Link each test binary against all libiommu sources
+$(BUILD_DIR)/%: $(TB_DIR)/%.c $(LIBIOMMU_SRCS) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-vpath %.adoc $(SRC_DIR)
+$(BUILD_DIR):
+	mkdir -p $@
 
-%.pdf: %.adoc
-	$(DOCKER_CMD) $(DOCKER_QUOTE) $(ASCIIDOCTOR_PDF) $(OPTIONS) $(REQUIRES) $< $(DOCKER_QUOTE)
+test: build
+	@echo "==> Running test cases..."
+	@pass=0; fail=0; \
+	for bin in $(TEST_BINS); do \
+	    echo "  [RUN] $$bin"; \
+	    if $$bin; then \
+	        echo "  [OK]  $$bin"; pass=$$((pass+1)); \
+	    else \
+	        echo "  [FAIL] $$bin (exit $$?)"; fail=$$((fail+1)); \
+	    fi; \
+	done; \
+	echo ""; \
+	echo "Results: $$pass passed, $$fail failed"; \
+	test $$fail -eq 0
 
-%.html: %.adoc
-	$(DOCKER_CMD) $(DOCKER_QUOTE) $(ASCIIDOCTOR_HTML) $(OPTIONS) $(REQUIRES) $< $(DOCKER_QUOTE)
+coverage: test
+	@echo "==> Collecting coverage data..."
+	mkdir -p coverage
+	lcov --capture \
+	     --directory $(BUILD_DIR) \
+	     --directory $(LIBIOMMU_SRC) \
+	     --output-file $(LCOV_INFO) \
+	     --rc lcov_branch_coverage=1
+	# Strip system headers and upstream test harness from report
+	lcov --remove $(LCOV_INFO) \
+	     '/usr/*' \
+	     '*/tb/c/*' \
+	     --output-file $(LCOV_INFO_FILT) \
+	     --rc lcov_branch_coverage=1
+	@echo "==> Generating HTML report -> $(COV_DIR)"
+	genhtml $(LCOV_INFO_FILT) \
+	        --output-directory $(COV_DIR) \
+	        --branch-coverage \
+	        --title "riscv-iommu ref model fault coverage"
+	@echo ""
+	@echo "Open $(COV_DIR)/index.html in a browser to view the report."
 
-build:
-	@echo "Checking if Docker is available..."
-	@if command -v docker >/dev/null 2>&1 ; then \
-		echo "Docker is available, building inside Docker container..."; \
-		$(MAKE) build-container; \
-	else \
-		echo "Docker is not available, building without Docker..."; \
-		$(MAKE) build-no-container; \
-	fi
-
-build-container:
-	@echo "Starting build inside Docker container..."
-	$(MAKE) build-docs
-	@echo "Build completed successfully inside Docker container."
-
-build-no-container:
-	@echo "Starting build..."
-	$(MAKE) SKIP_DOCKER=true build-docs
-	@echo "Build completed successfully."
-
-# Update docker image to latest
-docker-pull-latest:
-	docker pull ${DOCKER_IMG}
+# Print a short coverage summary to stdout (useful for CI)
+report: coverage
+	lcov --summary $(LCOV_INFO_FILT) --rc lcov_branch_coverage=1
 
 clean:
-	@echo "Cleaning up generated files..."
-	rm -rf $(BUILD_DIR)
-	@echo "Cleanup completed."
+	rm -rf $(BUILD_DIR) coverage
+	find . -name '*.gcda' -delete
+	find . -name '*.gcno' -delete
