@@ -42,16 +42,13 @@ TEST_BINS := $(patsubst $(TB_DIR)/%.c, $(BUILD_DIR)/%, $(TB_SRCS))
 
 all: build test coverage
 
-# ------------------------------------------------------------------ #
-# `build` target depends on actual binaries. The order-only prereq   #
-# `| $(BUILD_DIR)` ensures the directory exists BEFORE gcc is invoked.
-# ------------------------------------------------------------------ #
+# `build` is a phony target that just triggers binary compilation.
+# Each binary rule itself ensures `build/` exists via `mkdir -p` in the
+# recipe (no order-only prereq needed — avoids phony-vs-directory confusion).
 build: $(TEST_BINS)
 
-$(BUILD_DIR):
-	mkdir -p $@
-
-$(BUILD_DIR)/%: $(TB_DIR)/%.c $(ALL_LIB_SRCS) | $(BUILD_DIR)
+$(BUILD_DIR)/%: $(TB_DIR)/%.c $(ALL_LIB_SRCS)
+	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test: build
@@ -71,7 +68,7 @@ test: build
 
 coverage: test
 	@echo "==> Collecting coverage data..."
-	mkdir -p coverage
+	@mkdir -p coverage
 	lcov --capture \
 	     --directory $(BUILD_DIR) \
 	     --output-file $(LCOV_INFO) \
