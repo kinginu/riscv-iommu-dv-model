@@ -1,0 +1,138 @@
+# =============================================================================
+# .github/workflows/ref-model-coverage.yml
+#
+# Triggered when:
+#   - A testbench file is added / modified (tb/c/** or tb/cocotb/**)
+#   - The ref model source itself changes (upstream submodule update)
+#   - Any push to main / PR targeting main
+#
+# Steps:
+#   1. Checkout (with submodules for upstream ref model)
+#   2. Install tooling (gcc, lcov, cocotb)
+#   3. Build ref model with --coverage
+#   4. Run all C test-bench binaries
+#   5. Collect lcov data & generate HTML report
+#   6. Upload HTML report as a CI artefact
+#   7. (Optional) fail if line/branch coverage drops below threshold
+# =============================================================================
+
+name: Ref Model Coverage
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'tb/**'
+      - 'upstream/**'
+      - 'Makefile'
+      - '.github/workflows/ref-model-coverage.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tb/**'
+      - 'upstream/**'
+      - 'Makefile'
+
+jobs:
+  coverage:
+    name: Build & Coverage Report
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # 1. Checkout (including upstream submodule)
+      # ------------------------------------------------------------------ #
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive   # pulls upstream/iommu_ref_model
+
+      # ------------------------------------------------------------------ #
+      # 2. Install dependencies
+      # ------------------------------------------------------------------ #
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc lcov python3-pip iverilog
+
+      - name: Install Python packages
+        run: |
+          pip3 install --upgrade pip
+          pip3 install cocotb pytest coverage lcov_cobertura
+
+      # ------------------------------------------------------------------ #
+      # 3-5. Build + test + coverage (via Makefile)
+      # ------------------------------------------------------------------ #
+      - name: Build ref model with coverage instrumentation
+        run: make build
+
+      - name: Run C test-bench
+        run: make test
+
+      - name: Collect coverage & generate HTML report
+        run: make coverage
+
+      # ------------------------------------------------------------------ #
+      # 6. Upload HTML report as CI artefact
+      # ------------------------------------------------------------------ #
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ref-model-coverage-report
+          path: coverage/html/
+          retention-days: 30
+
+      # ------------------------------------------------------------------ #
+      # 7. Print summary and enforce minimum thresholds
+      #    Adjust BRANCH_MIN and LINE_MIN to your team's targets.
+      # ------------------------------------------------------------------ #
+      - name: Coverage summary & threshold check
+        run: |
+          echo "=== Coverage Summary ==="
+          lcov --summary coverage/lcov_filtered.info --rc lcov_branch_coverage=1
+
+          LINE_MIN=80
+          BRANCH_MIN=70
+
+          LINE_PCT=$(lcov --summary coverage/lcov_filtered.info \
+                         --rc lcov_branch_coverage=1 2>&1 \
+                     | grep "lines" | grep -oP '\d+\.\d+(?=%)' | head -1)
+          BRANCH_PCT=$(lcov --summary coverage/lcov_filtered.info \
+                           --rc lcov_branch_coverage=1 2>&1 \
+                       | grep "branches" | grep -oP '\d+\.\d+(?=%)' | head -1)
+
+          echo "Line coverage   : ${LINE_PCT}% (min: ${LINE_MIN}%)"
+          echo "Branch coverage : ${BRANCH_PCT}% (min: ${BRANCH_MIN}%)"
+
+          python3 -c "
+          line   = float('${LINE_PCT}')
+          branch = float('${BRANCH_PCT}')
+          ok = True
+          if line < ${LINE_MIN}:
+              print(f'FAIL: line coverage {line}% < ${LINE_MIN}%')
+              ok = False
+          if branch < ${BRANCH_MIN}:
+              print(f'FAIL: branch coverage {branch}% < ${BRANCH_MIN}%')
+              ok = False
+          if ok:
+              print('PASS: coverage thresholds met')
+          exit(0 if ok else 1)
+          "
+
+      # ------------------------------------------------------------------ #
+      # 8. (Optional) Convert lcov -> Cobertura XML for PR annotations
+      # ------------------------------------------------------------------ #
+      - name: Convert to Cobertura XML
+        if: always()
+        run: |
+          lcov_cobertura coverage/lcov_filtered.info \
+            --output coverage/cobertura.xml \
+            --demangle
+
+      - name: Upload Cobertura XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-coverage
+          path: coverage/cobertura.xml
