@@ -1,24 +1,28 @@
 # =============================================================================
-# riscv-iommu-ref-cov  —  Makefile
+# riscv-iommu-dv-model  —  Makefile
 #
-# Builds the upstream libiommu reference model with gcov coverage
-# instrumentation, then runs all registered test cases and generates
-# an lcov HTML report.
+# Builds libiommu + libtables reference model with gcov coverage
+# instrumentation, links against tb/c/ test drivers, then generates
+# an lcov HTML coverage report.
 #
 # Usage:
-#   make              — build + run tests + generate HTML report
-#   make build        — compile with coverage flags only
-#   make test         — run all test binaries
-#   make coverage     — collect gcov data & generate HTML report
+#   make              — build + test + HTML report
+#   make build        — compile only
+#   make test         — run test binaries
+#   make coverage     — collect gcov data, generate HTML
 #   make clean        — remove build artefacts and coverage data
 # =============================================================================
 
 # --------------------------------------------------------------------------- #
-# Paths (adjust REF_MODEL_DIR if the submodule lives elsewhere)
+# Paths  (relative to repo root)
 # --------------------------------------------------------------------------- #
-REF_MODEL_DIR   := upstream/iommu_ref_model
-LIBIOMMU_SRC    := $(REF_MODEL_DIR)/libiommu/src
-LIBIOMMU_INC    := $(REF_MODEL_DIR)/libiommu/include
+REFMODEL_ROOT   := iommu_ref_model
+LIBIOMMU_INC    := $(REFMODEL_ROOT)/libiommu/include
+LIBIOMMU_SRC    := $(REFMODEL_ROOT)/libiommu/src
+LIBTABLES_INC   := $(REFMODEL_ROOT)/libtables/include
+LIBTABLES_SRC   := $(REFMODEL_ROOT)/libtables/src
+TEST_INC        := $(REFMODEL_ROOT)/test
+
 TB_DIR          := tb/c
 BUILD_DIR       := build
 COV_DIR         := coverage/html
@@ -31,36 +35,44 @@ LCOV_INFO_FILT  := coverage/lcov_filtered.info
 CC      := gcc
 CFLAGS  := -O0 -g \
             -I$(LIBIOMMU_INC) \
+            -I$(LIBTABLES_INC) \
+            -I$(TEST_INC) \
             --coverage \
             -fprofile-arcs \
             -ftest-coverage \
             -Wall -Wextra -Wno-unused-parameter
-LDFLAGS := --coverage
+LDFLAGS := --coverage -lm
 
 # --------------------------------------------------------------------------- #
 # Sources
 # --------------------------------------------------------------------------- #
-LIBIOMMU_SRCS := $(wildcard $(LIBIOMMU_SRC)/*.c)
-TB_SRCS       := $(wildcard $(TB_DIR)/*.c)
+LIBIOMMU_SRCS   := $(wildcard $(LIBIOMMU_SRC)/*.c)
+LIBTABLES_SRCS  := $(wildcard $(LIBTABLES_SRC)/*.c)
+# tbapi.c provides the memory model stub used by ref model internals
+TBAPI_SRCS      := $(REFMODEL_ROOT)/test/tbapi.c \
+                   $(REFMODEL_ROOT)/test/test_utils.c
 
-# One test binary per file in tb/c/
+ALL_LIB_SRCS    := $(LIBIOMMU_SRCS) $(LIBTABLES_SRCS) $(TBAPI_SRCS)
+
+# One test binary per .c file in tb/c/
+TB_SRCS   := $(wildcard $(TB_DIR)/*.c)
 TEST_BINS := $(patsubst $(TB_DIR)/%.c, $(BUILD_DIR)/%, $(TB_SRCS))
 
 # --------------------------------------------------------------------------- #
 # Targets
 # --------------------------------------------------------------------------- #
-.PHONY: all build test coverage clean report
+.PHONY: all build test coverage report clean
 
 all: build test coverage
 
-build: $(TEST_BINS)
-
-# Link each test binary against all libiommu sources
-$(BUILD_DIR)/%: $(TB_DIR)/%.c $(LIBIOMMU_SRCS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+build: $(BUILD_DIR) $(TEST_BINS)
 
 $(BUILD_DIR):
 	mkdir -p $@
+
+# Each test binary = its own tb/c/*.c  +  all library sources
+$(BUILD_DIR)/%: $(TB_DIR)/%.c $(ALL_LIB_SRCS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test: build
 	@echo "==> Running test cases..."
@@ -70,7 +82,7 @@ test: build
 	    if $$bin; then \
 	        echo "  [OK]  $$bin"; pass=$$((pass+1)); \
 	    else \
-	        echo "  [FAIL] $$bin (exit $$?)"; fail=$$((fail+1)); \
+	        echo "  [FAIL] $$bin  (exit $$?)"; fail=$$((fail+1)); \
 	    fi; \
 	done; \
 	echo ""; \
@@ -82,12 +94,12 @@ coverage: test
 	mkdir -p coverage
 	lcov --capture \
 	     --directory $(BUILD_DIR) \
-	     --directory $(LIBIOMMU_SRC) \
 	     --output-file $(LCOV_INFO) \
 	     --rc lcov_branch_coverage=1
-	# Strip system headers and upstream test harness from report
 	lcov --remove $(LCOV_INFO) \
 	     '/usr/*' \
+	     '*/test/tbapi.c' \
+	     '*/test/test_utils.c' \
 	     '*/tb/c/*' \
 	     --output-file $(LCOV_INFO_FILT) \
 	     --rc lcov_branch_coverage=1
@@ -99,7 +111,6 @@ coverage: test
 	@echo ""
 	@echo "Open $(COV_DIR)/index.html in a browser to view the report."
 
-# Print a short coverage summary to stdout (useful for CI)
 report: coverage
 	lcov --summary $(LCOV_INFO_FILT) --rc lcov_branch_coverage=1
 
