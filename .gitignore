@@ -4,3 +4,8 @@
 
 # MacOS
 .DS_Store
+build/
+coverage/
+*.gcno
+*.gcda
+*.gcov
