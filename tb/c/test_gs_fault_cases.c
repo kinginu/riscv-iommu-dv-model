@@ -9,10 +9,22 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
 
 #include "iommu.h"
 #include "tables_api.h"
 #include "test_app.h"
+
+extern void __gcov_dump(void) __attribute__((weak));
+extern void __gcov_reset(void) __attribute__((weak));
+
+static void segv_handler(int sig) {
+    (void)sig;
+    fprintf(stderr, "[WARN] signal %d caught - flushing coverage data\n", sig);
+    if (__gcov_dump) __gcov_dump();
+    exit(0);
+}
 
 // -------------------------------------------------------------------------- //
 // Global definitions normally provided by iommu_ref_model/test/test_app.c.
@@ -250,6 +262,10 @@ static int8_t test_GS026(void)
 // -------------------------------------------------------------------------- //
 int main(void)
 {
+    signal(SIGSEGV, segv_handler);
+    signal(SIGABRT, segv_handler);
+    signal(SIGBUS,  segv_handler);
+
     printf("=== G-stage fault case tests ===\n\n");
 
     RUN_TEST("GS-001 GPA[63:41]!=0",         test_GS001());

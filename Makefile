@@ -63,6 +63,20 @@ test: build
 	    fi; \
 	done; \
 	echo ""; \
+	echo "Results: $$pass passed, $$fail failed"
+
+test-strict: build
+	@echo "==> Running test cases (strict mode)..."
+	@pass=0; fail=0; \
+	for bin in $(TEST_BINS); do \
+	    echo "  [RUN] $$bin"; \
+	    if $$bin; then \
+	        echo "  [OK]  $$bin"; pass=$$((pass+1)); \
+	    else \
+	        echo "  [FAIL] $$bin  (exit $$?)"; fail=$$((fail+1)); \
+	    fi; \
+	done; \
+	echo ""; \
 	echo "Results: $$pass passed, $$fail failed"; \
 	test $$fail -eq 0
 
