@@ -81,9 +81,32 @@ static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
 {
     reset_system(1 /*mem_gb*/, 65535 /*num_vms*/);
     memset(&g_iommu, 0, sizeof(g_iommu));
+
+    // IOMMU capabilities mirror those exercised by iommu_ref_model test_app.c.
+    capabilities_t cap = {0};
+    fctl_t         fctl = {0};
+    cap.version = 0x10;
+    cap.Sv39 = cap.Sv48 = cap.Sv57 = 1;
+    cap.Sv39x4 = cap.Sv48x4 = cap.Sv57x4 = 1;
+    cap.amo_hwad = cap.ats = cap.t2gpa = 1;
+    cap.hpm = cap.msi_flat = cap.msi_mrif = cap.amo_mrif = 1;
+    cap.dbg = 1;
+    cap.pas = 50;
+    cap.pd20 = cap.pd17 = cap.pd8 = 1;
+    cap.Svrsw60t59b = 1;
+
+    const uint64_t SV_BARE_SZ   = 0x40000000ULL;
+    const uint64_t SV32_BARE_SZ = 0x200000ULL;
+
+    reset_iommu(&g_iommu, 8, 40, 0xff, 3, Off, DDT_3LVL, 0xFFFFFF, 0, 0,
+                (FILL_IOATC_ATS_T2GPA | FILL_IOATC_ATS_ALWAYS),
+                cap, fctl,
+                SV_BARE_SZ, SV_BARE_SZ, SV_BARE_SZ, SV32_BARE_SZ,
+                SV_BARE_SZ, SV_BARE_SZ, SV_BARE_SZ, SV32_BARE_SZ);
+
     enable_cq(&g_iommu, 4);
     enable_fq(&g_iommu, 4);
-    enable_iommu(&g_iommu, IOMMU_MODE_OFF);
+    enable_iommu(&g_iommu, DDT_3LVL);
 
     uint64_t gppn = add_device(
         &g_iommu,

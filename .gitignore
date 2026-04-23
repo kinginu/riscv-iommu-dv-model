@@ -9,3 +9,4 @@ coverage/
 *.gcno
 *.gcda
 *.gcov
+cobertura.xml
