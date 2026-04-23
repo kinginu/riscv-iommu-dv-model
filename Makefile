@@ -1,21 +1,3 @@
-# =============================================================================
-# riscv-iommu-dv-model  —  Makefile
-#
-# Builds libiommu + libtables reference model with gcov coverage
-# instrumentation, links against tb/c/ test drivers, then generates
-# an lcov HTML coverage report.
-#
-# Usage:
-#   make              — build + test + HTML report
-#   make build        — compile only
-#   make test         — run test binaries
-#   make coverage     — collect gcov data, generate HTML
-#   make clean        — remove build artefacts and coverage data
-# =============================================================================
-
-# --------------------------------------------------------------------------- #
-# Paths  (relative to repo root)
-# --------------------------------------------------------------------------- #
 REFMODEL_ROOT   := iommu_ref_model
 LIBIOMMU_INC    := $(REFMODEL_ROOT)/libiommu/include
 LIBIOMMU_SRC    := $(REFMODEL_ROOT)/libiommu/src
@@ -29,9 +11,6 @@ COV_DIR         := coverage/html
 LCOV_INFO       := coverage/lcov.info
 LCOV_INFO_FILT  := coverage/lcov_filtered.info
 
-# --------------------------------------------------------------------------- #
-# Toolchain
-# --------------------------------------------------------------------------- #
 CC      := gcc
 CFLAGS  := -O0 -g \
             -I$(LIBIOMMU_INC) \
@@ -40,38 +19,32 @@ CFLAGS  := -O0 -g \
             --coverage \
             -fprofile-arcs \
             -ftest-coverage \
-            -Wall -Wextra -Wno-unused-parameter
+            -Wno-unused-variable \
+            -Wno-implicit-fallthrough \
+            -Wno-sign-compare \
+            -Wno-type-limits
 LDFLAGS := --coverage -lm
 
-# --------------------------------------------------------------------------- #
-# Sources
-# --------------------------------------------------------------------------- #
 LIBIOMMU_SRCS   := $(wildcard $(LIBIOMMU_SRC)/*.c)
 LIBTABLES_SRCS  := $(wildcard $(LIBTABLES_SRC)/*.c)
-# tbapi.c provides the memory model stub used by ref model internals
 TBAPI_SRCS      := $(REFMODEL_ROOT)/test/tbapi.c \
                    $(REFMODEL_ROOT)/test/test_utils.c
-
 ALL_LIB_SRCS    := $(LIBIOMMU_SRCS) $(LIBTABLES_SRCS) $(TBAPI_SRCS)
 
-# One test binary per .c file in tb/c/
 TB_SRCS   := $(wildcard $(TB_DIR)/*.c)
 TEST_BINS := $(patsubst $(TB_DIR)/%.c, $(BUILD_DIR)/%, $(TB_SRCS))
 
-# --------------------------------------------------------------------------- #
-# Targets
-# --------------------------------------------------------------------------- #
 .PHONY: all build test coverage report clean
 
 all: build test coverage
 
-build: $(BUILD_DIR) $(TEST_BINS)
+build: | $(BUILD_DIR)
+	$(MAKE) $(TEST_BINS)
 
 $(BUILD_DIR):
 	mkdir -p $@
 
-# Each test binary = its own tb/c/*.c  +  all library sources
-$(BUILD_DIR)/%: $(TB_DIR)/%.c $(ALL_LIB_SRCS)
+$(BUILD_DIR)/%: $(TB_DIR)/%.c $(ALL_LIB_SRCS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 test: build
@@ -103,13 +76,11 @@ coverage: test
 	     '*/tb/c/*' \
 	     --output-file $(LCOV_INFO_FILT) \
 	     --rc lcov_branch_coverage=1
-	@echo "==> Generating HTML report -> $(COV_DIR)"
 	genhtml $(LCOV_INFO_FILT) \
 	        --output-directory $(COV_DIR) \
 	        --branch-coverage \
 	        --title "riscv-iommu ref model fault coverage"
-	@echo ""
-	@echo "Open $(COV_DIR)/index.html in a browser to view the report."
+	@echo "Open $(COV_DIR)/index.html to view the report."
 
 report: coverage
 	lcov --summary $(LCOV_INFO_FILT) --rc lcov_branch_coverage=1
