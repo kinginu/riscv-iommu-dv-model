@@ -38,7 +38,7 @@ ALL_LIB_SRCS    := $(LIBIOMMU_SRCS) $(LIBTABLES_SRCS) $(TBAPI_SRCS)
 TB_SRCS   := $(wildcard $(TB_DIR)/*.c)
 TEST_BINS := $(patsubst $(TB_DIR)/%.c, $(BUILD_DIR)/%, $(TB_SRCS))
 
-.PHONY: all build test coverage report clean
+.PHONY: all build test test-strict test-report coverage report clean
 
 all: build test coverage
 
@@ -53,17 +53,24 @@ $(BUILD_DIR)/%: $(TB_DIR)/%.c $(ALL_LIB_SRCS)
 
 test: build
 	@echo "==> Running test cases..."
+	@mkdir -p $(BUILD_DIR)/logs
 	@pass=0; fail=0; \
 	for bin in $(TEST_BINS); do \
+	    log=$(BUILD_DIR)/logs/$$(basename $$bin).log; \
 	    echo "  [RUN] $$bin"; \
-	    if $$bin; then \
+	    if $$bin > $$log 2>&1; then \
 	        echo "  [OK]  $$bin"; pass=$$((pass+1)); \
 	    else \
 	        echo "  [FAIL] $$bin  (exit $$?)"; fail=$$((fail+1)); \
 	    fi; \
+	    tail -n +1 $$log; \
 	done; \
 	echo ""; \
 	echo "Results: $$pass passed, $$fail failed"
+
+test-report: test
+	@echo "==> Generating human-readable test report..."
+	@python3 scripts/gen_test_report.py $(BUILD_DIR)/logs/*.log
 
 test-strict: build
 	@echo "==> Running test cases (strict mode)..."

@@ -71,6 +71,25 @@ jobs:
         continue-on-error: true
         run: make test
 
+      - name: Generate human-readable test report
+        if: always()
+        run: |
+          make test-report || true
+          echo "### Test report (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          head -n 120 coverage/test_report.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            coverage/test_report.txt
+            coverage/test_report.md
+            build/logs/
+
       - name: Collect coverage & generate HTML report
         run: make coverage
 

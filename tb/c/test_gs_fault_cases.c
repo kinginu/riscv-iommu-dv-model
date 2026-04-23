@@ -15,6 +15,7 @@
 #include "iommu.h"
 #include "tables_api.h"
 #include "test_app.h"
+#include "test_report.h"
 
 extern void __gcov_dump(void) __attribute__((weak));
 extern void __gcov_reset(void) __attribute__((weak));
@@ -54,6 +55,7 @@ static int test_num = 0;
 
 #define RUN_TEST(name, fn)                        \
     do {                                          \
+        g_current_test = (name);                  \
         printf("  %-48s : ", (name));             \
         if ((fn) == 0) {                          \
             printf("\x1B[32mPASS\x1B[0m\n");     \
@@ -155,7 +157,7 @@ static int8_t test_GS001(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, bad_gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -170,7 +172,7 @@ static int8_t test_GS003(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -183,7 +185,7 @@ static int8_t test_GS004(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
 
@@ -198,7 +200,7 @@ static int8_t test_GS006(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -210,7 +212,7 @@ static int8_t test_GS011(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -222,7 +224,7 @@ static int8_t test_GS012(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -234,7 +236,7 @@ static int8_t test_GS013(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
 
@@ -247,7 +249,7 @@ static int8_t test_GS014(void)
     send_translation_request(&g_iommu, MY_DID, 0,0,0,
         1, 0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 20, 0);
 }
 
@@ -259,7 +261,7 @@ static int8_t test_GS015(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -271,7 +273,7 @@ static int8_t test_GS016(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
 
@@ -282,7 +284,7 @@ static int8_t test_GS026(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_SUCCESS, 0, 0);
 }
 
@@ -307,7 +309,7 @@ static int8_t test_GS005(void)
     send_translation_request(&g_iommu, MY_DID, 0,0,0,
         1 /*exec_req*/, 0, 0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 20, 0);
 }
 
@@ -323,7 +325,7 @@ static int8_t test_GS007(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -339,7 +341,7 @@ static int8_t test_GS008(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
@@ -355,7 +357,7 @@ static int8_t test_GS009(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
 
@@ -371,7 +373,7 @@ static int8_t test_GS010(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
 
@@ -387,7 +389,7 @@ static int8_t test_GS017(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 5, 0);
 }
 static int8_t test_GS018(void)
@@ -398,7 +400,7 @@ static int8_t test_GS018(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 5, 0);
 }
 static int8_t test_GS019(void)
@@ -409,7 +411,7 @@ static int8_t test_GS019(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, gpa, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 7, 0);
 }
 static int8_t test_GS020(void)
@@ -420,7 +422,7 @@ static int8_t test_GS020(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 5, 0);
 }
 
@@ -437,7 +439,7 @@ static int8_t test_GS021(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 13, 0);
 }
 static int8_t test_GS022(void)
@@ -448,7 +450,7 @@ static int8_t test_GS022(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 static int8_t test_GS023(void)
@@ -459,7 +461,7 @@ static int8_t test_GS023(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 static int8_t test_GS024(void)
@@ -470,7 +472,7 @@ static int8_t test_GS024(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, WRITE, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
 static int8_t test_GS025(void)
@@ -481,7 +483,7 @@ static int8_t test_GS025(void)
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, READ, &req, &rsp);
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 13, 0);
 }
 
@@ -497,7 +499,7 @@ static int8_t test_GS027(void)
         ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
     // DTF=1: fault reported to device but no FQ record. We still expect
     // UNSUPPORTED_REQUEST status and cause=21 in the response.
-    return check_rsp_and_faults(&g_iommu, &req, &rsp,
+    return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
 
