@@ -1,0 +1,161 @@
+# =============================================================================
+# tb/cases/gs_faults.yaml
+#
+# Declarative test-case specification.
+# Each case is a pure data record describing:
+#   - The IOMMU configuration
+#   - The page-table state to install
+#   - The translation request to send
+#   - The expected outcome
+#
+# The runner (tb/cocotb/test_runner.py) drives the DUT from these records
+# and cross-checks against the C reference model.
+#
+# No Python changes are needed to add a new case — just append to this file.
+# =============================================================================
+
+defaults:
+  # Applied to every case unless overridden
+  iohgatp_mode: Sv39x4
+  iosatp_mode:  Bare
+  gade: 0
+  sade: 0
+  device_id: 1
+  gscid: 1
+  privilege: U
+
+# "matrix" cases are parameter-expanded: each row produces N concrete cases.
+# Useful for the "inject fault at any level" style we saw in test_s1_page_fault_v_0.
+# -----------------------------------------------------------------------------
+
+cases:
+
+  # ---------------------------------------------------------------------
+  # GS-001  GPA upper bits check
+  # ---------------------------------------------------------------------
+  - id:          GS-001
+    description: "Sv39x4: GPA[63:41] != 0 -> guest page fault"
+    stimulus:
+      iova:          0x0000040000000000   # bit 42 set
+      access:        read
+    # No page tables needed — fault happens before the walk starts.
+    expect:
+      status:        fault
+      cause:         21           # load/read guest page fault
+      fault_stage:   G
+
+  # ---------------------------------------------------------------------
+  # GS-003 / GS-004 / GS-005  V=0 injection at every level
+  # Matrix expansion: one YAML entry -> three test cases
+  # ---------------------------------------------------------------------
+  - id:          GS-00{3,4,5}-v0-level-{level}
+    description: "G-stage V=0 at level {level} on {access}"
+    matrix:
+      - { id_suffix: 3, level: 0, access: read,  cause: 21 }
+      - { id_suffix: 4, level: 1, access: write, cause: 23 }
+      - { id_suffix: 5, level: 2, access: exec,  cause: 20 }
+    stimulus:
+      iova:          0x0000000040000000
+      access:        "{access}"
+    pagetables:
+      g_stage:
+        # Build a normal path, then stomp V=0 at the chosen level
+        - { level: 2, kind: non_leaf, valid: "{level != 2}" }
+        - { level: 1, kind: non_leaf, valid: "{level != 1}" }
+        - { level: 0, kind: leaf, valid: "{level != 0}",
+            ppn: 0xDEAD, r: 1, w: 1, u: 1, a: 1, d: 1 }
+    expect:
+      status:        fault
+      cause:         "{cause}"
+      fault_stage:   G
+
+  # ---------------------------------------------------------------------
+  # GS-006  R=0, W=1 reserved encoding
+  # ---------------------------------------------------------------------
+  - id:          GS-006
+    description: "Leaf R=0, W=1 is a reserved encoding"
+    stimulus:
+      iova:          0x0000000041000000
+      access:        read
+    pagetables:
+      g_stage:
+        - { level: 0, kind: leaf, valid: 1, ppn: 0x1234,
+            r: 0, w: 1, x: 0, u: 1, a: 1, d: 1 }
+    expect:
+      status:        fault
+      cause:         21
+      fault_stage:   G
+
+  # ---------------------------------------------------------------------
+  # Permission checks: R / W / X
+  # ---------------------------------------------------------------------
+  - id:          GS-01{2,3,4}-perm-{perm}
+    description: "{access} on PTE with {perm}=0 -> fault"
+    matrix:
+      - { id_suffix: 2, perm: R, access: read,  cause: 21,
+          r: 0, w: 0, x: 1 }
+      - { id_suffix: 3, perm: W, access: write, cause: 23,
+          r: 1, w: 0, x: 0 }
+      - { id_suffix: 4, perm: X, access: exec,  cause: 20,
+          r: 1, w: 1, x: 0 }
+    stimulus:
+      iova:          0x0000000044000000
+      access:        "{access}"
+    pagetables:
+      g_stage:
+        - { level: 0, kind: leaf, valid: 1, ppn: 0xAAAA,
+            r: "{r}", w: "{w}", x: "{x}", u: 1, a: 1, d: 1 }
+    expect:
+      status:        fault
+      cause:         "{cause}"
+      fault_stage:   G
+
+  # ---------------------------------------------------------------------
+  # A/D bit handling with GADE=0
+  # ---------------------------------------------------------------------
+  - id:          GS-015
+    description: "A=0, GADE=0 -> fault"
+    config:
+      gade: 0
+    stimulus:
+      iova:          0x0000000045000000
+      access:        read
+    pagetables:
+      g_stage:
+        - { level: 0, kind: leaf, valid: 1, ppn: 0xDDDD,
+            r: 1, w: 1, u: 1, a: 0, d: 1 }
+    expect:
+      status:        fault
+      cause:         21
+      fault_stage:   G
+
+  - id:          GS-016
+    description: "D=0, store, GADE=0 -> fault"
+    config:
+      gade: 0
+    stimulus:
+      iova:          0x0000000045001000
+      access:        write
+    pagetables:
+      g_stage:
+        - { level: 0, kind: leaf, valid: 1, ppn: 0xEEEE,
+            r: 1, w: 1, u: 1, a: 1, d: 0 }
+    expect:
+      status:        fault
+      cause:         23
+      fault_stage:   G
+
+  # ---------------------------------------------------------------------
+  # Success case — iohgatp Bare
+  # ---------------------------------------------------------------------
+  - id:          GS-026
+    description: "iohgatp=Bare -> success"
+    config:
+      iohgatp_mode: Bare
+    stimulus:
+      iova:          0x0000000001500000
+      access:        read
+    expect:
+      status:        success
+      # When iohgatp=Bare, PA == GPA (page offset preserved)
+      pa:            0x0000000001500000

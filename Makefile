@@ -1,3 +1,7 @@
+# =============================================================================
+# riscv-iommu-dv-model  —  Makefile
+# =============================================================================
+
 REFMODEL_ROOT   := iommu_ref_model
 LIBIOMMU_INC    := $(REFMODEL_ROOT)/libiommu/include
 LIBIOMMU_SRC    := $(REFMODEL_ROOT)/libiommu/src
@@ -38,8 +42,11 @@ TEST_BINS := $(patsubst $(TB_DIR)/%.c, $(BUILD_DIR)/%, $(TB_SRCS))
 
 all: build test coverage
 
-build: | $(BUILD_DIR)
-	$(MAKE) $(TEST_BINS)
+# ------------------------------------------------------------------ #
+# `build` target depends on actual binaries. The order-only prereq   #
+# `| $(BUILD_DIR)` ensures the directory exists BEFORE gcc is invoked.
+# ------------------------------------------------------------------ #
+build: $(TEST_BINS)
 
 $(BUILD_DIR):
 	mkdir -p $@
