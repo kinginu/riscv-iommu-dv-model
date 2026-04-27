@@ -68,9 +68,10 @@ static int test_num = 0;
 #define STATUS_FAULT    UNSUPPORTED_REQUEST
 #define MY_GSCID   1
 #define MY_DID     1
+#define MY_PID     0x42  // fits in PD8 (8-bit process_id)
 
 static iommu_t  g_iommu;
-static iosatp_t g_iosatp;  // populated by setup_fs
+static iosatp_t g_iosatp;  // populated by setup_fs / setup_fs_pdtv
 
 // -------------------------------------------------------------------------- //
 // Setup: iohgatp=Bare, iosatp=Sv39 (single-stage).
@@ -129,6 +130,54 @@ static void setup_fs(uint8_t iosatp_mode, uint8_t sade, uint8_t dtf)
     DC.fsc.iosatp = g_iosatp;
 
     add_dev_context(&g_iommu, &DC, MY_DID);
+}
+
+// PDTV=1 variant: DC.fsc holds pdtp; the iosatp lives inside the PC.
+// The ref model only honours `priv_req=1` when `pid_valid=1` AND there is a
+// PC (DC.tc.PDTV=1, ENS=1) — otherwise the request is silently demoted to
+// U_MODE (see iommu_ref_model/test/tbapi.c:get_attribs_from_req). Tests that
+// need to drive S-mode (e.g. SUM checks) must use this setup.
+static void setup_fs_pdtv(uint8_t iosatp_mode, uint8_t sum,
+                          uint8_t sade, uint8_t dtf)
+{
+    iommu_cap_init();
+
+    static device_context_t DC;
+    memset(&DC, 0, sizeof(DC));
+    DC.tc.V    = 1;
+    DC.tc.DTF  = dtf;
+    DC.tc.SADE = sade;
+    DC.tc.PDTV = 1;
+    DC.iohgatp.MODE = IOHGATP_Bare;
+
+    static char zero[4096] = {0};
+
+    // Single-level PDT (PD8) — process_id must fit in 8 bits.
+    DC.fsc.pdtp.MODE = PD8;
+    DC.fsc.pdtp.PPN  = get_free_ppn(1);
+    write_memory_test(zero, DC.fsc.pdtp.PPN * PAGESIZE, 4096);
+
+    add_dev_context(&g_iommu, &DC, MY_DID);
+
+    // S-stage root (referenced via PC.fsc.iosatp).
+    memset(&g_iosatp, 0, sizeof(g_iosatp));
+    g_iosatp.MODE = iosatp_mode;
+    g_iosatp.PPN  = get_free_ppn(1);
+    write_memory_test(zero, g_iosatp.PPN * PAGESIZE, 4096);
+
+    process_context_t PC;
+    memset(&PC, 0, sizeof(PC));
+    PC.ta.V     = 1;
+    PC.ta.ENS   = 1;          // required for priv_req to be honoured
+    PC.ta.SUM   = sum;
+    PC.ta.PSCID = 0;
+    PC.fsc.iosatp = g_iosatp;
+    // add_process_context() unconditionally calls translate_gpa(), which
+    // returns -1 when iohgatp.MODE==Bare and aborts before writing the PC.
+    // Since we're single-stage here, place the 16-byte PC manually at
+    // pdtp.PPN*PAGESIZE + PDI[0]*16 (PD8 → single-level PDT, PDI[0]=pid[7:0]).
+    uint64_t pc_addr = DC.fsc.pdtp.PPN * PAGESIZE + (MY_PID & 0xFF) * 16;
+    write_memory_test((char *)&PC, pc_addr, 16);
 }
 
 static void make_leaf_s(uint64_t va, uint64_t ppn,
@@ -396,28 +445,35 @@ static int8_t test_FS017(void)
 }
 
 // FS-018 S-mode req (priv=1), PTE.U=1, SUM=0 -> cause 13
+// Needs PDTV=1 + a PC (with ENS=1, SUM=0) so the ref model treats the
+// request as S-mode; pid_valid=1 + priv_req=1 are required by
+// get_attribs_from_req.
 static int8_t test_FS018(void)
 {
-    setup_fs(IOSATP_Sv39, 0, 0);
+    setup_fs_pdtv(IOSATP_Sv39, /*sum=*/0, 0, 0);
     uint64_t va = 0x0000000000601000ULL;
     make_leaf_s(va, 0x1009, 1,1,0,1, 1,1, 0,0,0);
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
-    send_translation_request(&g_iommu, MY_DID, 0,0,0,
-        0, /*priv=*/1, 0,
+    send_translation_request(&g_iommu, MY_DID,
+        /*pid_valid=*/1, /*pid=*/MY_PID, /*no_write=*/0,
+        /*exec_req=*/0, /*priv_req=*/1, /*is_cxl_dev=*/0,
         ADDR_TYPE_UNTRANSLATED, va, 1, READ, &req, &rsp);
     return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 13, 0);
 }
 
-// FS-019 S-mode instr fetch, PTE.U=1, X=1 -> cause 12 (SUM doesn't cover X)
+// FS-019 S-mode instr fetch, PTE.U=1, X=1 -> cause 12
+// SUM=0 → S-mode access to user pages is disallowed for both reads and
+// instruction fetches; this test exercises the instruction-fetch path.
 static int8_t test_FS019(void)
 {
-    setup_fs(IOSATP_Sv39, 0, 0);
+    setup_fs_pdtv(IOSATP_Sv39, /*sum=*/0, 0, 0);
     uint64_t va = 0x0000000000603000ULL;
     make_leaf_s(va, 0x100A, 1,1,1,1, 1,1, 0,0,0);
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
-    send_translation_request(&g_iommu, MY_DID, 0,0,0,
-        /*exec_req=*/1, /*priv=*/1, 0,
+    send_translation_request(&g_iommu, MY_DID,
+        /*pid_valid=*/1, /*pid=*/MY_PID, /*no_write=*/0,
+        /*exec_req=*/1, /*priv_req=*/1, /*is_cxl_dev=*/0,
         ADDR_TYPE_UNTRANSLATED, va, 1, READ, &req, &rsp);
     return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 12, 0);

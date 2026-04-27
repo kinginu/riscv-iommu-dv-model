@@ -426,14 +426,15 @@ static int8_t test_GS020(void)
         (status_t)STATUS_FAULT, 5, 0);
 }
 
-// GS-021..025: 2-stage tests need VS-stage PTEs with access to the
-// device context's iosatp. The add_device path allocates this
-// internally and does not expose it, so full setup is deferred.
-// We issue the translation with 2-stage enabled; cause-code match
-// depends on ref model behaviour with no VS PTEs populated.
+// GS-021..025: 2-stage tests. add_device() allocates the iosatp root as
+// a GPPN and adds a G-stage mapping for it. With no VS PTEs populated,
+// the VS root PTE reads back as V=0, which should produce a VS-stage
+// page fault. We pass gade=1 so the implicit G-stage A-bit update for
+// the VS PTE access does not itself fault before VS-stage detection.
 static int8_t test_GS021(void)
 {
-    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39,
+                                 /*gade=*/1, /*sade=*/0, /*dtf=*/0);
     (void)iohgatp;
     uint64_t iova = 0x0000000001001000ULL;
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
@@ -453,6 +454,11 @@ static int8_t test_GS022(void)
     return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 21, 0);
 }
+// GS-023 2-stage implicit fault on a store request. With gade=0, the
+// implicit G-stage A-bit update for the VS PTE access faults; the
+// reported cause must reflect the *original* access type (write), so
+// cause=23 (write guest page fault), not 21. iotval2 bit0 is set
+// because the failure was an implicit access (a_gpa=0).
 static int8_t test_GS023(void)
 {
     iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
@@ -462,7 +468,7 @@ static int8_t test_GS023(void)
     send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
         ADDR_TYPE_UNTRANSLATED, iova, 1, WRITE, &req, &rsp);
     return check_and_report(&g_iommu, &req, &rsp,
-        (status_t)STATUS_FAULT, 21, 0);
+        (status_t)STATUS_FAULT, 23, /*iotval2=*/1);
 }
 static int8_t test_GS024(void)
 {
@@ -475,9 +481,13 @@ static int8_t test_GS024(void)
     return check_and_report(&g_iommu, &req, &rsp,
         (status_t)STATUS_FAULT, 23, 0);
 }
+// GS-025 With no VS PTEs added, the VS root reads V=0, which is a
+// VS-stage page fault → cause 13. gade=1 so the implicit G-stage walk
+// for the VS PTE address does not itself fault on A-bit update.
 static int8_t test_GS025(void)
 {
-    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39, 0, 0, 0);
+    iohgatp_t iohgatp = setup_ex(IOHGATP_Sv39x4, IOSATP_Sv39,
+                                 /*gade=*/1, /*sade=*/0, /*dtf=*/0);
     (void)iohgatp;
     uint64_t iova = 0x0000000001005000ULL;
     hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
