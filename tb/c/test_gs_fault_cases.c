@@ -111,7 +111,7 @@ static iohgatp_t setup_ex(uint8_t iohgatp_mode, uint8_t iosatp_mode,
     enable_fq(&g_iommu, 4);
     enable_iommu(&g_iommu, DDT_3LVL);
 
-    uint64_t gppn = add_device(
+    uint64_t dc_addr = add_device(
         &g_iommu,
         MY_DID, MY_GSCID,
         0, 0, 0,
@@ -122,12 +122,13 @@ static iohgatp_t setup_ex(uint8_t iohgatp_mode, uint8_t iosatp_mode,
         MSIPTP_Off, 0,
         0, 0);
 
-    static iohgatp_t iohgatp;
-    memset(&iohgatp, 0, sizeof(iohgatp));
-    iohgatp.MODE  = iohgatp_mode;
-    iohgatp.PPN   = gppn;
-    iohgatp.GSCID = MY_GSCID;
-    return iohgatp;
+    // add_device() returns the DC address, not the iohgatp PPN. Read DC back
+    // so subsequent add_g_stage_pte() calls in tests use the same root PPN
+    // the IOMMU will walk from. (Previously this code stored the DC address
+    // into iohgatp.PPN, so test-side PTE writes landed in the wrong SPA.)
+    static device_context_t DC_back;
+    read_memory_test(dc_addr, sizeof(DC_back), (char *)&DC_back);
+    return DC_back.iohgatp;
 }
 
 static iohgatp_t setup(uint8_t iohgatp_mode, uint8_t gade)
@@ -497,6 +498,26 @@ static int8_t test_GS025(void)
         (status_t)STATUS_FAULT, 13, 0);
 }
 
+// GS-028 G-stage leaf NAPOT reserved encoding -> cause 21
+// gpte.N=1 at i==0 with PPN[3:0] != 0x8 is a reserved encoding per the
+// Svnapot rules; the ref model rejects it at iommu_second_stage_trans.c:269
+// regardless of cap.svnapot.
+static int8_t test_GS028(void)
+{
+    iohgatp_t iohgatp = setup(IOHGATP_Sv39x4, 0);
+    uint64_t gpa = 0x0000000003000000ULL;
+    gpte_t pte = {0};
+    pte.V = 1; pte.R = 1; pte.U = 1; pte.A = 1; pte.D = 1;
+    pte.N = 1;
+    pte.PPN = 0x1234;        // PPN[3:0]=0x4 (not 0x8) -> reserved encoding
+    add_g_stage_pte(&g_iommu, iohgatp, gpa, pte, 0);
+    hb_to_iommu_req_t req; iommu_to_hb_rsp_t rsp;
+    send_translation_request(&g_iommu, MY_DID, 0,0,0,0,0,0,
+        ADDR_TYPE_UNTRANSLATED, gpa, 1, READ, &req, &rsp);
+    return check_and_report(&g_iommu, &req, &rsp,
+        (status_t)STATUS_FAULT, 21, /*iotval2=*/0x0000000003000000ULL);
+}
+
 // GS-027 DTF=1 suppresses FQ record on GS fault (explicit GS)
 static int8_t test_GS027(void)
 {
@@ -551,6 +572,7 @@ int main(void)
     RUN_TEST("GS-025 2-stage FS U=0 wins",   test_GS025());
     RUN_TEST("GS-026 iohgatp=Bare success",  test_GS026());
     RUN_TEST("GS-027 DTF suppress GS",       test_GS027());
+    RUN_TEST("GS-028 leaf NAPOT reserved",   test_GS028());
 
     printf("\n=== Summary: %d passed, %d failed ===\n", g_pass, g_fail);
     return (g_fail > 0) ? 1 : 0;
