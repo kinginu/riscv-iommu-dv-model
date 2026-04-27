@@ -33,6 +33,51 @@ make
 
 ---
 
+## Running the suite locally (without a container)
+
+The CI workflow (`.github/workflows/ref-model-coverage.yml`) is just a
+thin wrapper around the Makefile, so you can reproduce every CI step
+locally with the same `make` targets.
+
+### Dependencies
+
+```bash
+sudo apt-get install -y gcc lcov python3-pip iverilog
+pip3 install cocotb pytest coverage lcov_cobertura
+```
+
+`iverilog` and `cocotb` are only required for the cocotb cross-check
+flow — skip them if you only run the C testbench.
+
+### Make targets
+
+| Target | What it does | Output |
+|---|---|---|
+| `make build` | Builds each `tb/c/*.c` against the ref model with `--coverage`. | `build/<test>` |
+| `make test` | Runs every test binary, captures stdout. | `build/logs/<test>.log` |
+| `make test-report` | Aggregates the per-case `REPORT` lines. | `coverage/test_report.{txt,md}` |
+| `make coverage` | Runs `lcov` over the `.gcda` files and renders HTML. | `coverage/html/index.html`, `coverage/lcov_filtered.info` |
+| `make report` | Prints the lcov summary to stdout. | — |
+| `make all` | `build + test + coverage` (no `test-report`). | as above |
+| `make clean` | Removes `build/`, `coverage/`, all `.gcda` / `.gcno`. | — |
+
+### One-shot reproduction of the CI pipeline
+
+```bash
+make build
+make test          # `continue-on-error: true` in CI; fine if some cases FAIL
+make test-report
+make coverage
+# Optional: Cobertura XML for PR annotations (CI uploads this too)
+lcov_cobertura coverage/lcov_filtered.info \
+    --output coverage/cobertura.xml --demangle
+```
+
+Open `coverage/html/index.html` for the line/branch coverage report and
+`coverage/test_report.md` for the per-case pass/fail summary.
+
+---
+
 ## How coverage verification works
 
 ```
